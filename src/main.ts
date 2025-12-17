@@ -73,7 +73,14 @@ function fetchPage(url: string): Promise<{ doc: Document; paragraphs: string[]; 
   });
 }
 
-function buildCard(title: string): { root: HTMLDivElement; content: HTMLDivElement; images: HTMLDivElement; toggleBtn: HTMLButtonElement } {
+function buildCard(title: string): {
+  root: HTMLDivElement;
+  content: HTMLDivElement;
+  images: HTMLDivElement;
+  toggleBtn: HTMLButtonElement;
+  prevBtn: HTMLButtonElement;
+  nextBtn: HTMLButtonElement;
+} {
   const card = document.createElement('div');
   card.className = 'tm-card';
 
@@ -86,9 +93,24 @@ function buildCard(title: string): { root: HTMLDivElement; content: HTMLDivEleme
 
   const actions = document.createElement('div');
   actions.className = 'tm-card__actions';
+
+  // Navigation buttons for keywords
+  const prevBtn = document.createElement('button');
+  prevBtn.className = 'tm-btn';
+  prevBtn.textContent = '◀ 前';
+  prevBtn.title = '前のキーワードへ';
+
+  const nextBtn = document.createElement('button');
+  nextBtn.className = 'tm-btn';
+  nextBtn.textContent = '次 ▶';
+  nextBtn.title = '次のキーワードへ';
+
   const toggleBtn = document.createElement('button');
   toggleBtn.className = 'tm-btn';
   toggleBtn.textContent = '折叠';
+
+  actions.appendChild(prevBtn);
+  actions.appendChild(nextBtn);
   actions.appendChild(toggleBtn);
 
   header.appendChild(hTitle);
@@ -112,7 +134,35 @@ function buildCard(title: string): { root: HTMLDivElement; content: HTMLDivEleme
     toggleBtn.textContent = hidden ? '折叠' : '展开';
   });
 
-  return { root: card, content, images, toggleBtn };
+  // Keyword navigation logic
+  let currentHighlightIndex = -1;
+
+  const navigateToHighlight = (index: number) => {
+    const highlights = content.querySelectorAll('.tm-highlight');
+    if (highlights.length === 0) return;
+
+    // Remove previous active state
+    highlights.forEach((el) => el.classList.remove('tm-highlight--active'));
+
+    // Wrap around index
+    if (index < 0) index = highlights.length - 1;
+    if (index >= highlights.length) index = 0;
+    currentHighlightIndex = index;
+
+    const target = highlights[index] as HTMLElement;
+    target.classList.add('tm-highlight--active');
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
+
+  prevBtn.addEventListener('click', () => {
+    navigateToHighlight(currentHighlightIndex - 1);
+  });
+
+  nextBtn.addEventListener('click', () => {
+    navigateToHighlight(currentHighlightIndex + 1);
+  });
+
+  return { root: card, content, images, toggleBtn, prevBtn, nextBtn };
 }
 
 (() => {
@@ -121,7 +171,8 @@ function buildCard(title: string): { root: HTMLDivElement; content: HTMLDivEleme
   if (!query) return;
   const lowerQuery = query.toLowerCase();
 
-  const articleAnchors = Array.from(document.querySelectorAll('a[href*="/articles/"]')) as HTMLAnchorElement[];
+  // 只选取主要搜索结果区域的文章链接，排除侧边栏(#yjnSub)中的链接
+  const articleAnchors = Array.from(document.querySelectorAll('#yjnMain a[href*="/articles/"]')) as HTMLAnchorElement[];
   const articleLinks = articleAnchors.filter((link, index, array) => array.findIndex((l) => l.href === link.href) === index);
   if (articleLinks.length === 0) return;
 
@@ -207,5 +258,39 @@ function buildCard(title: string): { root: HTMLDivElement; content: HTMLDivEleme
         content.textContent = '記事の読み込みに失敗しました。';
       }
     })();
+  });
+
+  // Global keyboard navigation for all highlights
+  let globalHighlightIndex = -1;
+
+  const navigateGlobal = (direction: 'prev' | 'next') => {
+    const allHighlights = Array.from(document.querySelectorAll('.tm-highlight')) as HTMLElement[];
+    if (allHighlights.length === 0) return;
+
+    // Remove previous active state from all
+    allHighlights.forEach((el) => el.classList.remove('tm-highlight--active'));
+
+    if (direction === 'prev') {
+      globalHighlightIndex = globalHighlightIndex <= 0 ? allHighlights.length - 1 : globalHighlightIndex - 1;
+    } else {
+      globalHighlightIndex = globalHighlightIndex >= allHighlights.length - 1 ? 0 : globalHighlightIndex + 1;
+    }
+
+    const target = allHighlights[globalHighlightIndex];
+    target.classList.add('tm-highlight--active');
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
+
+  document.addEventListener('keydown', (e) => {
+    // Ignore if user is typing in an input field
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+    if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+      e.preventDefault();
+      navigateGlobal('prev');
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+      e.preventDefault();
+      navigateGlobal('next');
+    }
   });
 })();

@@ -1,6 +1,8 @@
 import './style.css';
 import { GM_xmlhttpRequest } from '$';
 
+const MIN_IMAGE_SIZE = 50;
+
 function parseParagraphs(doc: Document): string[] {
   let paraNodes: HTMLParagraphElement[] = [];
   const articleElem = doc.querySelector('article');
@@ -28,7 +30,7 @@ function parseImages(doc: Document): string[] {
     if (lowerSrc.includes('clear.gif') || lowerSrc.includes('boost_') || lowerSrc.includes('icon') || lowerSrc.startsWith('data:')) return;
     const w = img.naturalWidth;
     const h = img.naturalHeight;
-    if ((w && w < 50) || (h && h < 50)) return;
+    if ((w && w < MIN_IMAGE_SIZE) || (h && h < MIN_IMAGE_SIZE)) return;
     try {
       const urlObj = new URL(src, base);
       src = urlObj.href;
@@ -78,8 +80,6 @@ function buildCard(title: string): {
   content: HTMLDivElement;
   images: HTMLDivElement;
   toggleBtn: HTMLButtonElement;
-  prevBtn: HTMLButtonElement;
-  nextBtn: HTMLButtonElement;
 } {
   const card = document.createElement('div');
   card.className = 'tm-card';
@@ -94,23 +94,10 @@ function buildCard(title: string): {
   const actions = document.createElement('div');
   actions.className = 'tm-card__actions';
 
-  // Navigation buttons for keywords
-  const prevBtn = document.createElement('button');
-  prevBtn.className = 'tm-btn';
-  prevBtn.textContent = '◀ 前';
-  prevBtn.title = '前のキーワードへ';
-
-  const nextBtn = document.createElement('button');
-  nextBtn.className = 'tm-btn';
-  nextBtn.textContent = '次 ▶';
-  nextBtn.title = '次のキーワードへ';
-
   const toggleBtn = document.createElement('button');
   toggleBtn.className = 'tm-btn';
-  toggleBtn.textContent = '折叠';
+  toggleBtn.textContent = '折りたたむ';
 
-  actions.appendChild(prevBtn);
-  actions.appendChild(nextBtn);
   actions.appendChild(toggleBtn);
 
   header.appendChild(hTitle);
@@ -131,38 +118,108 @@ function buildCard(title: string): {
     const hidden = content.style.display === 'none';
     content.style.display = hidden ? '' : 'none';
     images.style.display = hidden ? '' : 'none';
-    toggleBtn.textContent = hidden ? '折叠' : '展开';
+    toggleBtn.textContent = hidden ? '折りたたむ' : '展開する';
   });
 
-  // Keyword navigation logic
-  let currentHighlightIndex = -1;
+  return { root: card, content, images, toggleBtn };
+}
 
-  const navigateToHighlight = (index: number) => {
-    const highlights = content.querySelectorAll('.tm-highlight');
-    if (highlights.length === 0) return;
+// Load state management
+const LOAD_STATE = {
+  PENDING: 'pending',
+  LOADING: 'loading',
+  LOADED: 'loaded',
+  ERROR: 'error',
+} as const;
 
-    // Remove previous active state
-    highlights.forEach((el) => el.classList.remove('tm-highlight--active'));
+async function loadArticleContent(
+  card: HTMLElement,
+  link: HTMLAnchorElement,
+  content: HTMLDivElement,
+  images: HTMLDivElement,
+  lowerQuery: string,
+  query: string
+): Promise<void> {
+  card.dataset.loadState = LOAD_STATE.LOADING;
 
-    // Wrap around index
-    if (index < 0) index = highlights.length - 1;
-    if (index >= highlights.length) index = 0;
-    currentHighlightIndex = index;
+  try {
+    const urlObj = new URL(link.href, window.location.href);
+    const baseUrl = `${urlObj.origin}${urlObj.pathname}`;
+    const firstPage = await fetchPage(link.href);
+    let allParagraphs = firstPage.paragraphs.slice();
+    let allImages = firstPage.images.slice();
 
-    const target = highlights[index] as HTMLElement;
-    target.classList.add('tm-highlight--active');
-    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  };
+    let maxPage = 1;
+    const pageNumbers = new Set<number>();
+    const anchors = Array.from(firstPage.doc.querySelectorAll('a[href*="?page="]')) as HTMLAnchorElement[];
+    anchors.forEach((a) => {
+      const match = a.href.match(/\?page=(\d+)/);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (!Number.isNaN(num)) pageNumbers.add(num);
+      }
+    });
+    if (pageNumbers.size > 0) maxPage = Math.max(...Array.from(pageNumbers));
+    if (maxPage > 1) {
+      for (let i = 2; i <= maxPage; i += 1) {
+        const pageUrl = `${baseUrl}?page=${i}`;
+        try {
+          const res = await fetchPage(pageUrl);
+          allParagraphs = allParagraphs.concat(res.paragraphs);
+          allImages = allImages.concat(res.images);
+        } catch {}
+      }
+    }
+    allImages = Array.from(new Set(allImages));
 
-  prevBtn.addEventListener('click', () => {
-    navigateToHighlight(currentHighlightIndex - 1);
-  });
+    const frag = document.createDocumentFragment();
+    const orderedSentences: string[] = [];
+    allParagraphs.forEach((paragraph) => {
+      const sentences = splitSentences(paragraph);
+      sentences.forEach((s) => orderedSentences.push(s));
+    });
+    orderedSentences.forEach((sentence) => {
+      const pNode = document.createElement('p');
+      const lowerText = sentence.toLowerCase();
+      if (lowerText.includes(lowerQuery)) {
+        const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const reg = new RegExp(escaped, 'gi');
+        pNode.innerHTML = sentence.replace(reg, (m) => `<span class="tm-highlight">${m}</span>`);
+      } else {
+        pNode.textContent = sentence;
+      }
+      frag.appendChild(pNode);
+    });
+    content.innerHTML = '';
+    content.appendChild(frag);
 
-  nextBtn.addEventListener('click', () => {
-    navigateToHighlight(currentHighlightIndex + 1);
-  });
+    images.innerHTML = '';
+    if (allImages.length > 0) {
+      const grid = document.createElement('div');
+      grid.className = 'tm-image-grid';
+      allImages.forEach((src) => {
+        const a = document.createElement('a');
+        a.href = src;
+        a.target = '_blank';
+        const img = document.createElement('img');
+        img.src = src;
+        img.loading = 'lazy';
+        img.className = 'tm-thumb';
+        a.appendChild(img);
+        grid.appendChild(a);
+      });
+      images.appendChild(grid);
+    } else {
+      const noImg = document.createElement('p');
+      noImg.textContent = 'この記事には画像が含まれていません。';
+      images.appendChild(noImg);
+    }
 
-  return { root: card, content, images, toggleBtn, prevBtn, nextBtn };
+    card.dataset.loadState = LOAD_STATE.LOADED;
+  } catch {
+    content.textContent = '記事の読み込みに失敗しました。';
+    card.dataset.loadState = LOAD_STATE.ERROR;
+  }
 }
 
 (() => {
@@ -176,88 +233,38 @@ function buildCard(title: string): {
   const articleLinks = articleAnchors.filter((link, index, array) => array.findIndex((l) => l.href === link.href) === index);
   if (articleLinks.length === 0) return;
 
+  // IntersectionObserver for lazy loading - load when card enters viewport
+  const observer = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          const card = entry.target as HTMLElement;
+          if (card.dataset.loadState === LOAD_STATE.PENDING) {
+            const link = card.dataset.href ? document.querySelector(`a[href="${card.dataset.href}"]`) as HTMLAnchorElement : null;
+            const content = card.querySelector('.tm-card__content') as HTMLDivElement;
+            const images = card.querySelector('.tm-card__images') as HTMLDivElement;
+            if (link && content && images) {
+              loadArticleContent(card, link, content, images, lowerQuery, query);
+            }
+          }
+        }
+      });
+    },
+    { rootMargin: '100px' } // Pre-load 100px before entering viewport
+  );
+
   articleLinks.forEach((link) => {
     const title = link.textContent?.trim() || link.href;
-    const { root, content, images } = buildCard(title);
+    const { root } = buildCard(title);
+    
+    // Store link href for later retrieval and set initial state
+    root.dataset.href = link.href;
+    root.dataset.loadState = LOAD_STATE.PENDING;
+    
     link.parentElement?.appendChild(root);
-
-    (async () => {
-      try {
-        const urlObj = new URL(link.href, window.location.href);
-        const baseUrl = `${urlObj.origin}${urlObj.pathname}`;
-        const firstPage = await fetchPage(link.href);
-        let allParagraphs = firstPage.paragraphs.slice();
-        let allImages = firstPage.images.slice();
-
-        let maxPage = 1;
-        const pageNumbers = new Set<number>();
-        const anchors = Array.from(firstPage.doc.querySelectorAll('a[href*="?page="]')) as HTMLAnchorElement[];
-        anchors.forEach((a) => {
-          const match = a.href.match(/\?page=(\d+)/);
-          if (match) {
-            const num = parseInt(match[1], 10);
-            if (!Number.isNaN(num)) pageNumbers.add(num);
-          }
-        });
-        if (pageNumbers.size > 0) maxPage = Math.max(...Array.from(pageNumbers));
-        if (maxPage > 1) {
-          for (let i = 2; i <= maxPage; i += 1) {
-            const pageUrl = `${baseUrl}?page=${i}`;
-            try {
-              const res = await fetchPage(pageUrl);
-              allParagraphs = allParagraphs.concat(res.paragraphs);
-              allImages = allImages.concat(res.images);
-            } catch { }
-          }
-        }
-        allImages = Array.from(new Set(allImages));
-
-        const frag = document.createDocumentFragment();
-        const orderedSentences: string[] = [];
-        allParagraphs.forEach((paragraph) => {
-          const sentences = splitSentences(paragraph);
-          sentences.forEach((s) => orderedSentences.push(s));
-        });
-        orderedSentences.forEach((sentence) => {
-          const pNode = document.createElement('p');
-          const lowerText = sentence.toLowerCase();
-          if (lowerText.includes(lowerQuery)) {
-            const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const reg = new RegExp(escaped, 'gi');
-            pNode.innerHTML = sentence.replace(reg, (m) => `<span class="tm-highlight">${m}</span>`);
-          } else {
-            pNode.textContent = sentence;
-          }
-          frag.appendChild(pNode);
-        });
-        content.innerHTML = '';
-        content.appendChild(frag);
-
-        images.innerHTML = '';
-        if (allImages.length > 0) {
-          const grid = document.createElement('div');
-          grid.className = 'tm-image-grid';
-          allImages.forEach((src) => {
-            const a = document.createElement('a');
-            a.href = src;
-            a.target = '_blank';
-            const img = document.createElement('img');
-            img.src = src;
-            img.loading = 'lazy';
-            img.className = 'tm-thumb';
-            a.appendChild(img);
-            grid.appendChild(a);
-          });
-          images.appendChild(grid);
-        } else {
-          const noImg = document.createElement('p');
-          noImg.textContent = 'この記事には画像が含まれていません。';
-          images.appendChild(noImg);
-        }
-      } catch {
-        content.textContent = '記事の読み込みに失敗しました。';
-      }
-    })();
+    
+    // Start observing - will load when card enters viewport
+    observer.observe(root);
   });
 
   // Global keyboard navigation for all highlights

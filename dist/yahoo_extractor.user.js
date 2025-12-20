@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yahoo!ニュース 文章抽取脚本
 // @namespace    http://tampermonkey.net/
-// @version      0.1.1
+// @version      0.1.2
 // @description  在Yahoo!ニュース的搜索结果页中，自动抓取每条新闻文章的完整内容，将包含搜索关键词的段落标红，并列出文章内的所有图片链接。此脚本仅在新闻搜索页面工作，不会影响其他页面。
 // @icon         https://vitejs.dev/logo.svg
 // @match        https://news.yahoo.co.jp/search*
@@ -17,9 +17,10 @@
 
   const d=new Set;const importCSS = async e=>{d.has(e)||(d.add(e),(t=>{typeof GM_addStyle=="function"?GM_addStyle(t):document.head.appendChild(document.createElement("style")).append(t);})(e));};
 
-  const styleCss = ":root{--tm-bg: #fff;--tm-fg: #213547;--tm-muted: #6b7280;--tm-border: #e5e7eb;--tm-accent: #2563eb;--tm-accent-weak: #dbeafe}@media(prefers-color-scheme:dark){:root{--tm-bg: #111827;--tm-fg: #e5e7eb;--tm-muted: #9ca3af;--tm-border: #1f2937;--tm-accent: #60a5fa;--tm-accent-weak: #0b1220}}.tm-card{margin:8px 0;background:var(--tm-bg);color:var(--tm-fg);border:1px solid var(--tm-border);border-radius:10px;box-shadow:0 1px 2px #0000000a}.tm-card__header{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid var(--tm-border)}.tm-card__title{font-size:14px;font-weight:600;line-height:1.4}.tm-card__actions{display:flex;gap:8px}.tm-btn{appearance:none;border:1px solid var(--tm-border);background:var(--tm-accent-weak);color:var(--tm-accent);padding:4px 10px;border-radius:6px;font-size:12px;cursor:pointer}.tm-btn:hover{filter:brightness(.98)}.tm-card__content{padding:10px 12px 8px;font-size:14px;line-height:1.6}.tm-card__content p{margin:0 0 6px}.tm-highlight{color:#dc2626;font-weight:700}.tm-highlight--active{background:#fef08a;border-radius:2px;animation:tm-pulse .5s ease-out}@keyframes tm-pulse{0%{background:#fde047;transform:scale(1.1)}to{background:#fef08a;transform:scale(1)}}.tm-card__images{padding:0 12px 12px}.tm-image-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:6px}.tm-thumb{width:100%;height:120px;object-fit:cover;border:1px solid var(--tm-border);border-radius:6px;display:block}";
+  const styleCss = ":root{--tm-bg: #fff;--tm-fg: #213547;--tm-muted: #6b7280;--tm-border: #e5e7eb;--tm-accent: #2563eb;--tm-accent-weak: #dbeafe;--tm-highlight: #dc2626;--tm-highlight-active: #fef08a;--tm-highlight-pulse: #fde047}@media(prefers-color-scheme:dark){:root{--tm-bg: #111827;--tm-fg: #e5e7eb;--tm-muted: #9ca3af;--tm-border: #1f2937;--tm-accent: #60a5fa;--tm-accent-weak: #0b1220;--tm-highlight: #f87171;--tm-highlight-active: #854d0e;--tm-highlight-pulse: #a16207}}.tm-card{margin:8px 0;background:var(--tm-bg);color:var(--tm-fg);border:1px solid var(--tm-border);border-radius:10px;box-shadow:0 1px 2px #0000000a}.tm-card__header{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid var(--tm-border)}.tm-card__title{font-size:14px;font-weight:600;line-height:1.4}.tm-card__actions{display:flex;gap:8px}.tm-btn{appearance:none;border:1px solid var(--tm-border);background:var(--tm-accent-weak);color:var(--tm-accent);padding:4px 10px;border-radius:6px;font-size:12px;cursor:pointer}.tm-btn:hover{filter:brightness(.95);transform:translateY(-1px)}.tm-btn:focus{outline:2px solid var(--tm-accent);outline-offset:2px}.tm-card__content{padding:10px 12px 8px;font-size:14px;line-height:1.6}.tm-card__content p{margin:0 0 6px}.tm-highlight{color:var(--tm-highlight);font-weight:700}.tm-highlight--active{background:var(--tm-highlight-active);border-radius:2px;animation:tm-pulse .5s ease-out}@keyframes tm-pulse{0%{background:var(--tm-highlight-pulse);transform:scale(1.1)}to{background:var(--tm-highlight-active);transform:scale(1)}}.tm-card__images{padding:0 12px 12px}.tm-image-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:6px}.tm-thumb{width:100%;height:120px;object-fit:cover;border:1px solid var(--tm-border);border-radius:6px;display:block}.tm-card[data-load-state=loading] .tm-card__content{opacity:.6}";
   importCSS(styleCss);
   var _GM_xmlhttpRequest = (() => typeof GM_xmlhttpRequest != "undefined" ? GM_xmlhttpRequest : void 0)();
+  const MIN_IMAGE_SIZE = 50;
   function parseParagraphs(doc) {
     let paraNodes = [];
     const articleElem = doc.querySelector("article");
@@ -46,7 +47,7 @@
       if (lowerSrc.includes("clear.gif") || lowerSrc.includes("boost_") || lowerSrc.includes("icon") || lowerSrc.startsWith("data:")) return;
       const w = img.naturalWidth;
       const h = img.naturalHeight;
-      if (w && w < 50 || h && h < 50) return;
+      if (w && w < MIN_IMAGE_SIZE || h && h < MIN_IMAGE_SIZE) return;
       try {
         const urlObj = new URL(src, base);
         src = urlObj.href;
@@ -99,19 +100,9 @@
     hTitle.textContent = title;
     const actions = document.createElement("div");
     actions.className = "tm-card__actions";
-    const prevBtn = document.createElement("button");
-    prevBtn.className = "tm-btn";
-    prevBtn.textContent = "◀ 前";
-    prevBtn.title = "前のキーワードへ";
-    const nextBtn = document.createElement("button");
-    nextBtn.className = "tm-btn";
-    nextBtn.textContent = "次 ▶";
-    nextBtn.title = "次のキーワードへ";
     const toggleBtn = document.createElement("button");
     toggleBtn.className = "tm-btn";
-    toggleBtn.textContent = "折叠";
-    actions.appendChild(prevBtn);
-    actions.appendChild(nextBtn);
+    toggleBtn.textContent = "折りたたむ";
     actions.appendChild(toggleBtn);
     header.appendChild(hTitle);
     header.appendChild(actions);
@@ -127,27 +118,93 @@
       const hidden = content.style.display === "none";
       content.style.display = hidden ? "" : "none";
       images.style.display = hidden ? "" : "none";
-      toggleBtn.textContent = hidden ? "折叠" : "展开";
+      toggleBtn.textContent = hidden ? "折りたたむ" : "展開する";
     });
-    let currentHighlightIndex = -1;
-    const navigateToHighlight = (index) => {
-      const highlights = content.querySelectorAll(".tm-highlight");
-      if (highlights.length === 0) return;
-      highlights.forEach((el) => el.classList.remove("tm-highlight--active"));
-      if (index < 0) index = highlights.length - 1;
-      if (index >= highlights.length) index = 0;
-      currentHighlightIndex = index;
-      const target = highlights[index];
-      target.classList.add("tm-highlight--active");
-      target.scrollIntoView({ behavior: "smooth", block: "center" });
-    };
-    prevBtn.addEventListener("click", () => {
-      navigateToHighlight(currentHighlightIndex - 1);
-    });
-    nextBtn.addEventListener("click", () => {
-      navigateToHighlight(currentHighlightIndex + 1);
-    });
-    return { root: card, content, images, toggleBtn, prevBtn, nextBtn };
+    return { root: card, content, images, toggleBtn };
+  }
+  const LOAD_STATE = {
+    PENDING: "pending",
+    LOADING: "loading",
+    LOADED: "loaded",
+    ERROR: "error"
+  };
+  async function loadArticleContent(card, link, content, images, lowerQuery, query) {
+    card.dataset.loadState = LOAD_STATE.LOADING;
+    try {
+      const urlObj = new URL(link.href, window.location.href);
+      const baseUrl = `${urlObj.origin}${urlObj.pathname}`;
+      const firstPage = await fetchPage(link.href);
+      let allParagraphs = firstPage.paragraphs.slice();
+      let allImages = firstPage.images.slice();
+      let maxPage = 1;
+      const pageNumbers = new Set();
+      const anchors = Array.from(firstPage.doc.querySelectorAll('a[href*="?page="]'));
+      anchors.forEach((a) => {
+        const match = a.href.match(/\?page=(\d+)/);
+        if (match) {
+          const num = parseInt(match[1], 10);
+          if (!Number.isNaN(num)) pageNumbers.add(num);
+        }
+      });
+      if (pageNumbers.size > 0) maxPage = Math.max(...Array.from(pageNumbers));
+      if (maxPage > 1) {
+        for (let i = 2; i <= maxPage; i += 1) {
+          const pageUrl = `${baseUrl}?page=${i}`;
+          try {
+            const res = await fetchPage(pageUrl);
+            allParagraphs = allParagraphs.concat(res.paragraphs);
+            allImages = allImages.concat(res.images);
+          } catch {
+          }
+        }
+      }
+      allImages = Array.from(new Set(allImages));
+      const frag = document.createDocumentFragment();
+      const orderedSentences = [];
+      allParagraphs.forEach((paragraph) => {
+        const sentences = splitSentences(paragraph);
+        sentences.forEach((s) => orderedSentences.push(s));
+      });
+      orderedSentences.forEach((sentence) => {
+        const pNode = document.createElement("p");
+        const lowerText = sentence.toLowerCase();
+        if (lowerText.includes(lowerQuery)) {
+          const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const reg = new RegExp(escaped, "gi");
+          pNode.innerHTML = sentence.replace(reg, (m) => `<span class="tm-highlight">${m}</span>`);
+        } else {
+          pNode.textContent = sentence;
+        }
+        frag.appendChild(pNode);
+      });
+      content.innerHTML = "";
+      content.appendChild(frag);
+      images.innerHTML = "";
+      if (allImages.length > 0) {
+        const grid = document.createElement("div");
+        grid.className = "tm-image-grid";
+        allImages.forEach((src) => {
+          const a = document.createElement("a");
+          a.href = src;
+          a.target = "_blank";
+          const img = document.createElement("img");
+          img.src = src;
+          img.loading = "lazy";
+          img.className = "tm-thumb";
+          a.appendChild(img);
+          grid.appendChild(a);
+        });
+        images.appendChild(grid);
+      } else {
+        const noImg = document.createElement("p");
+        noImg.textContent = "この記事には画像が含まれていません。";
+        images.appendChild(noImg);
+      }
+      card.dataset.loadState = LOAD_STATE.LOADED;
+    } catch {
+      content.textContent = "記事の読み込みに失敗しました。";
+      card.dataset.loadState = LOAD_STATE.ERROR;
+    }
   }
   (() => {
     const params = new URLSearchParams(window.location.search);
@@ -157,85 +214,31 @@
     const articleAnchors = Array.from(document.querySelectorAll('#yjnMain a[href*="/articles/"]'));
     const articleLinks = articleAnchors.filter((link, index, array) => array.findIndex((l) => l.href === link.href) === index);
     if (articleLinks.length === 0) return;
-    articleLinks.forEach((link) => {
-      const title = link.textContent?.trim() || link.href;
-      const { root, content, images } = buildCard(title);
-      link.parentElement?.appendChild(root);
-      (async () => {
-        try {
-          const urlObj = new URL(link.href, window.location.href);
-          const baseUrl = `${urlObj.origin}${urlObj.pathname}`;
-          const firstPage = await fetchPage(link.href);
-          let allParagraphs = firstPage.paragraphs.slice();
-          let allImages = firstPage.images.slice();
-          let maxPage = 1;
-          const pageNumbers = new Set();
-          const anchors = Array.from(firstPage.doc.querySelectorAll('a[href*="?page="]'));
-          anchors.forEach((a) => {
-            const match = a.href.match(/\?page=(\d+)/);
-            if (match) {
-              const num = parseInt(match[1], 10);
-              if (!Number.isNaN(num)) pageNumbers.add(num);
-            }
-          });
-          if (pageNumbers.size > 0) maxPage = Math.max(...Array.from(pageNumbers));
-          if (maxPage > 1) {
-            for (let i = 2; i <= maxPage; i += 1) {
-              const pageUrl = `${baseUrl}?page=${i}`;
-              try {
-                const res = await fetchPage(pageUrl);
-                allParagraphs = allParagraphs.concat(res.paragraphs);
-                allImages = allImages.concat(res.images);
-              } catch {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            const card = entry.target;
+            if (card.dataset.loadState === LOAD_STATE.PENDING) {
+              const link = card.dataset.href ? document.querySelector(`a[href="${card.dataset.href}"]`) : null;
+              const content = card.querySelector(".tm-card__content");
+              const images = card.querySelector(".tm-card__images");
+              if (link && content && images) {
+                loadArticleContent(card, link, content, images, lowerQuery, query);
               }
             }
           }
-          allImages = Array.from(new Set(allImages));
-          const frag = document.createDocumentFragment();
-          const orderedSentences = [];
-          allParagraphs.forEach((paragraph) => {
-            const sentences = splitSentences(paragraph);
-            sentences.forEach((s) => orderedSentences.push(s));
-          });
-          orderedSentences.forEach((sentence) => {
-            const pNode = document.createElement("p");
-            const lowerText = sentence.toLowerCase();
-            if (lowerText.includes(lowerQuery)) {
-              const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-              const reg = new RegExp(escaped, "gi");
-              pNode.innerHTML = sentence.replace(reg, (m) => `<span class="tm-highlight">${m}</span>`);
-            } else {
-              pNode.textContent = sentence;
-            }
-            frag.appendChild(pNode);
-          });
-          content.innerHTML = "";
-          content.appendChild(frag);
-          images.innerHTML = "";
-          if (allImages.length > 0) {
-            const grid = document.createElement("div");
-            grid.className = "tm-image-grid";
-            allImages.forEach((src) => {
-              const a = document.createElement("a");
-              a.href = src;
-              a.target = "_blank";
-              const img = document.createElement("img");
-              img.src = src;
-              img.loading = "lazy";
-              img.className = "tm-thumb";
-              a.appendChild(img);
-              grid.appendChild(a);
-            });
-            images.appendChild(grid);
-          } else {
-            const noImg = document.createElement("p");
-            noImg.textContent = "この記事には画像が含まれていません。";
-            images.appendChild(noImg);
-          }
-        } catch {
-          content.textContent = "記事の読み込みに失敗しました。";
-        }
-      })();
+        });
+      },
+      { rootMargin: "100px" }
+);
+    articleLinks.forEach((link) => {
+      const title = link.textContent?.trim() || link.href;
+      const { root } = buildCard(title);
+      root.dataset.href = link.href;
+      root.dataset.loadState = LOAD_STATE.PENDING;
+      link.parentElement?.appendChild(root);
+      observer.observe(root);
     });
     let globalHighlightIndex = -1;
     const navigateGlobal = (direction) => {

@@ -3,6 +3,42 @@ import { GM_xmlhttpRequest } from '$';
 
 const MIN_IMAGE_SIZE = 50;
 
+function getImageDimensionsSync(img: HTMLImageElement, src: string): { w: number; h: number } | null {
+  // 1. Try HTML attributes
+  const attrW = parseInt(img.getAttribute('width') || '', 10);
+  const attrH = parseInt(img.getAttribute('height') || '', 10);
+  if (attrW > 0 && attrH > 0) {
+    return { w: attrW, h: attrH };
+  }
+
+  // 2. Try srcset width descriptors
+  const srcset = img.getAttribute('srcset') || '';
+  if (srcset) {
+    const widths = srcset.match(/(\d+)w/g)?.map((w) => parseInt(w, 10)) || [];
+    if (widths.length > 0) {
+      const maxW = Math.max(...widths);
+      return { w: maxW, h: maxW }; // Assume square for filtering
+    }
+  }
+
+  // 3. Try URL dimension patterns (e.g., /100x100/, _100x100.jpg)
+  const urlPatterns = [
+    /[/_](\d{2,4})x(\d{2,4})(?:[_./]|$)/, // _100x100. or /100x100/
+    /[?&]w(?:idth)?=(\d+).*[?&]h(?:eight)?=(\d+)/i, // ?w=100&h=100
+    /[?&]h(?:eight)?=(\d+).*[?&]w(?:idth)?=(\d+)/i, // ?h=100&w=100 (reversed)
+  ];
+  for (const pattern of urlPatterns) {
+    const match = src.match(pattern);
+    if (match) {
+      const w = parseInt(match[1], 10);
+      const h = parseInt(match[2], 10);
+      if (w > 0 && h > 0) return { w, h };
+    }
+  }
+
+  return null; // Cannot determine - include the image
+}
+
 function parseParagraphs(doc: Document): string[] {
   let paraNodes: HTMLParagraphElement[] = [];
   const articleElem = doc.querySelector('article');
@@ -27,10 +63,17 @@ function parseImages(doc: Document): string[] {
     let src = img.getAttribute('src') || img.getAttribute('data-src') || '';
     if (!src) return;
     const lowerSrc = src.toLowerCase();
-    if (lowerSrc.includes('clear.gif') || lowerSrc.includes('boost_') || lowerSrc.includes('icon') || lowerSrc.startsWith('data:')) return;
-    const w = img.naturalWidth;
-    const h = img.naturalHeight;
-    if ((w && w < MIN_IMAGE_SIZE) || (h && h < MIN_IMAGE_SIZE)) return;
+    if (
+      lowerSrc.includes('clear.gif') ||
+      lowerSrc.includes('boost_') ||
+      lowerSrc.includes('icon') ||
+      lowerSrc.includes('logo') ||
+      lowerSrc.includes('avatar') ||
+      lowerSrc.includes('emoji') ||
+      lowerSrc.startsWith('data:')
+    ) return;
+    const dims = getImageDimensionsSync(img, src);
+    if (dims && (dims.w < MIN_IMAGE_SIZE || dims.h < MIN_IMAGE_SIZE)) return;
     try {
       const urlObj = new URL(src, base);
       src = urlObj.href;
@@ -267,37 +310,57 @@ async function loadArticleContent(
     observer.observe(root);
   });
 
-  // Global keyboard navigation for all highlights
-  let globalHighlightIndex = -1;
+  // Track by element reference instead of index to handle dynamic content
+  let currentHighlight: HTMLElement | null = null;
+
+  const isEditableElement = (target: EventTarget | null): boolean => {
+    if (!(target instanceof HTMLElement)) return false;
+    return (
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      target.isContentEditable
+    );
+  };
 
   const navigateGlobal = (direction: 'prev' | 'next') => {
     const allHighlights = Array.from(document.querySelectorAll('.tm-highlight')) as HTMLElement[];
     if (allHighlights.length === 0) return;
 
-    // Remove previous active state from all
     allHighlights.forEach((el) => el.classList.remove('tm-highlight--active'));
 
-    if (direction === 'prev') {
-      globalHighlightIndex = globalHighlightIndex <= 0 ? allHighlights.length - 1 : globalHighlightIndex - 1;
-    } else {
-      globalHighlightIndex = globalHighlightIndex >= allHighlights.length - 1 ? 0 : globalHighlightIndex + 1;
+    let currentIndex = currentHighlight ? allHighlights.indexOf(currentHighlight) : -1;
+    if (currentIndex === -1) {
+      currentIndex = direction === 'next' ? -1 : allHighlights.length;
     }
 
-    const target = allHighlights[globalHighlightIndex];
-    target.classList.add('tm-highlight--active');
-    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const newIndex =
+      direction === 'prev'
+        ? currentIndex <= 0
+          ? allHighlights.length - 1
+          : currentIndex - 1
+        : currentIndex >= allHighlights.length - 1
+          ? 0
+          : currentIndex + 1;
+
+    currentHighlight = allHighlights[newIndex];
+    currentHighlight.classList.add('tm-highlight--active');
+    currentHighlight.scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
 
   document.addEventListener('keydown', (e) => {
-    // Ignore if user is typing in an input field
-    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+    if (isEditableElement(e.target)) return;
 
-    if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
-      e.preventDefault();
-      navigateGlobal('prev');
-    } else if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
-      e.preventDefault();
-      navigateGlobal('next');
+    // Alt + Arrow keys for highlight navigation (preserves normal scrolling)
+    if (e.altKey && !e.ctrlKey && !e.metaKey) {
+      if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        e.stopPropagation();
+        navigateGlobal('prev');
+      } else if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        e.stopPropagation();
+        navigateGlobal('next');
+      }
     }
   });
 })();

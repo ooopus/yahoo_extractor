@@ -324,7 +324,14 @@ async function loadArticleContent(
 
   const navigateGlobal = (direction: 'prev' | 'next') => {
     const allHighlights = Array.from(document.querySelectorAll('.tm-highlight')) as HTMLElement[];
-    if (allHighlights.length === 0) return;
+    if (allHighlights.length === 0) {
+      // No highlights yet - try to trigger loading next pending card
+      const pendingCard = document.querySelector('.tm-card[data-load-state="pending"]') as HTMLElement | null;
+      if (pendingCard) {
+        pendingCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      return;
+    }
 
     allHighlights.forEach((el) => el.classList.remove('tm-highlight--active'));
 
@@ -333,14 +340,28 @@ async function loadArticleContent(
       currentIndex = direction === 'next' ? -1 : allHighlights.length;
     }
 
-    const newIndex =
-      direction === 'prev'
-        ? currentIndex <= 0
-          ? allHighlights.length - 1
-          : currentIndex - 1
-        : currentIndex >= allHighlights.length - 1
-          ? 0
-          : currentIndex + 1;
+    let newIndex: number;
+    if (direction === 'prev') {
+      newIndex = currentIndex <= 0 ? allHighlights.length - 1 : currentIndex - 1;
+    } else {
+      // Check if at end and there are pending cards to load
+      if (currentIndex >= allHighlights.length - 1) {
+        const pendingCard = document.querySelector('.tm-card[data-load-state="pending"]') as HTMLElement | null;
+        if (pendingCard) {
+          // Scroll to pending card to trigger lazy load instead of wrapping
+          pendingCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          // Keep current highlight active
+          if (currentHighlight) {
+            currentHighlight.classList.add('tm-highlight--active');
+          }
+          return;
+        }
+        // No pending cards - wrap to beginning
+        newIndex = 0;
+      } else {
+        newIndex = currentIndex + 1;
+      }
+    }
 
     currentHighlight = allHighlights[newIndex];
     currentHighlight.classList.add('tm-highlight--active');
